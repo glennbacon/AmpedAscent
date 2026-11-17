@@ -37,6 +37,15 @@ describe('rig', () => {
     expect(Math.abs(v.vx)).toBeLessThan(0.05);
   });
 
+  it('holds on a slope while parked (title/garage backdrop, ready state)', () => {
+    const sim = new RunSim(new FnTrack((x) => x * 0.25), STOCK_LOADOUT); // live = false
+    run(sim, 6);
+    expect(Math.abs(sim.vehicle.x)).toBeLessThan(0.3);
+    sim.live = true;
+    run(sim, 2); // released: it rolls back
+    expect(sim.vehicle.x).toBeLessThan(-1);
+  });
+
   it('reaches its designed top speed and stays planted on flat ground', () => {
     for (const lo of [STOCK_LOADOUT, MAXED_LOADOUT]) {
       const sim = flat(lo);

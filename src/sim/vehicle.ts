@@ -25,6 +25,8 @@ export interface VehicleCtx {
   flipMaster: boolean;
   /** The loop currently being ridden (radial press + power floor), else null. */
   loop: { cx: number; cy: number; r: number } | null;
+  /** Parking brake: wheels locked (title/garage backdrop, ready state, after a run ends). */
+  parked: boolean;
 }
 
 export interface Pose {
@@ -383,7 +385,13 @@ export class Vehicle {
     this.throttle = 0;
     this.braking = false;
     const rescuing = this.rescueT > 0;
-    if (brake > 0 && !rescuing) {
+    if (ctx.parked) {
+      const tq = (CFG.brakeForce * (giant ? CFG.superMassMul : 1) * r) / 2;
+      for (let i = 0; i < 2; i++) {
+        this.axles[i].setMotorSpeed(0);
+        this.axles[i].setMaxMotorTorque(tq);
+      }
+    } else if (brake > 0 && !rescuing) {
       if (this.speed > 1.0) {
         this.braking = true;
         const tq = (CFG.brakeForce * (giant ? CFG.superMassMul : 1) * brake * r) / 2;

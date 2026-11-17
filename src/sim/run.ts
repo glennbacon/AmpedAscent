@@ -182,6 +182,7 @@ export class RunSim {
       wheelieAssist: this.powerups.isActive('wheelie'),
       flipMaster: this.powerups.isActive('backflip'),
       loop: this.loopRide ? this.loopRide.loop : null,
+      parked: !this.live || this.status === 'ended' || (this.status === 'completed' && Math.abs(this.vehicle.speed) < 1.5),
     };
   }
 
