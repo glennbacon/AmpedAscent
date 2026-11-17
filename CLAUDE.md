@@ -22,6 +22,12 @@ npm run tune         # headless feel lab (see below)
 
 - **Every change must pass `npm run typecheck` and `npm test`.**
 - Stack: TypeScript, Vite 5, three 0.170, planck 1.4.2. No UI framework — menus are plain DOM + one CSS file.
+- **Open source, MIT** (`LICENSE`). Nothing in the repo is under another licence: no asset files.
+- **Hosted in the arcade**: <https://glennbacon.github.io/arcade/amped-ascent/>. The `glennbacon/arcade`
+  repo holds a built copy; its `./build.sh amped-ascent` runs `npm run build` here and copies `dist/`.
+  `base: './'` in `vite.config.ts` is what lets the build run from that subfolder — keep it relative.
+- `screenshot.png` (README): four 800 × 480 captures tiled 2 × 2 — title, `world=caverns`, `prop=loop`,
+  `screen=garage`.
 
 ## Architecture (`src/`)
 
