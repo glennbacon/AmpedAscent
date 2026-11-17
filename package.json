@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "description": "Amped Ascent — EV hill-climb driving game (three.js + Box2D remake)",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
