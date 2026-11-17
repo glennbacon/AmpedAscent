@@ -1,6 +1,7 @@
 /* Amped Ascent UI — carbon + neon. One accent (cyan) shared with the car's underglow and the track
    furniture; gold only ever means coins, green only ever means charge. */
 :root {
+  color-scheme: dark; /* one deliberate look: carbon + neon */
   --bg: #0b0d12;
   --panel: rgba(15, 18, 26, 0.94);
   --panel-2: #1a1f2b;

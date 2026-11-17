@@ -54,6 +54,8 @@ export const CFG = {
   tractionTier: 0.15, // +fraction per Traction tier (maxed 1.66)
   fourWDFrontShare: 0.4, // EXTRA tractive force through the front axle with 4WD engaged (rear keeps 1.0)
   wheelAngularDamping: 0.25,
+  wheelieGuardStart: 0.7, // rad of nose-up (vs the slope) where rear-only drive starts to fade
+  wheelieGuardEnd: 1.2, // …and is fully cut
 
   // ---- Attitude ------------------------------------------------------------
   airPitchAccel: 7.5, // rad/s² of pitch authority in the air, stock
@@ -74,19 +76,21 @@ export const CFG = {
   lowBatteryFraction: 0.2,
 
   // ---- Scoring -------------------------------------------------------------
+  // Economy note: every reward below is multiplied by the combo (×1…×5), so base values are small.
   coinsPerMeter: 0.12,
-  flipReward: 25,
+  flipReward: 12,
   wheelieCreditSeconds: 1.2,
-  wheelieRewardPerSec: 4,
+  wheelieRewardPerSec: 2,
   wheelieMinTilt: 0.2,
   bigAirSeconds: 0.9,
-  bigAirReward: 30,
-  loopReward: 60,
-  pipeSwoopReward: 20,
+  bigAirReward: 15,
+  loopReward: 30,
+  pipeSwoopReward: 10,
   pipeSwoopSpeed: 9,
-  deckRunReward: 20,
-  crashThroughReward: 30,
-  comboMaxLevel: 9,
+  deckRunReward: 10,
+  crashThroughReward: 15,
+  comboMaxLevel: 4, // ×5 at full combo
+  comboPickupsPerLevel: 2, // energy cells per combo step
   comboDecaySeconds: 12,
   reviveCost: 150,
 
@@ -95,7 +99,7 @@ export const CFG = {
   turboSpeedMul: 1.3,
   magnetRadius: 9,
   magnetPullSpeed: 22,
-  frenzySpawnInterval: 0.8,
+  frenzySpawnInterval: 1.0,
   frenzyArcCount: 4,
   jetsAirtime: 1.05, // seconds of air one burst buys at normal gravity
   rollBarRadius: 1.75,
@@ -129,6 +133,8 @@ export const CFG = {
   rampEndM: 2500,
   ampFloor: 0.6,
   ampCeil: 1.25,
+  ampCreepPerKm: 0.05, // past rampEndM the hills keep growing, slowly, for ever-harder long runs
+  ampMax: 1.6,
   seamMinM: 800,
   seamMaxM: 1000,
   seamBlendHalfM: 28,
@@ -137,7 +143,7 @@ export const CFG = {
   upgradeBaseCost: 800,
   upgradeMaxTier: 5,
   fourWDPrice: 24000,
-  masteryComboMultiplier: 8,
+  masteryComboMultiplier: 5,
   masteryBatteryFraction: 0.6,
 } as const;
 

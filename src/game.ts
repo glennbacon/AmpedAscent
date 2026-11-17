@@ -43,7 +43,6 @@ export class Game implements GameApi {
   private bankedSoFar = 0;
   private endTimer = 0; // counts down to showing an end card
   private pausedFrom: Phase = 'playing';
-  private garageReturn: 'title' = 'title';
   private qa: URLSearchParams;
   private driver: AutoDriver | null = null;
   private teachT = 0;
@@ -116,8 +115,8 @@ export class Game implements GameApi {
     if (before !== this.gfx.quality && this.sim) this.view.setSim(this.sim);
   }
   loadoutChanged() {
-    // The parked car behind the Garage/title picks up the new loadout immediately.
-    if (this.phase === 'garage' || this.phase === 'title') this.stageParked(this.phase === 'garage' ? 'garage' : 'title');
+    // Nothing to rebuild: the parked car never drives, and every run builds its rig from the
+    // loadout at start. (Re-staging here would reshuffle the scenery behind the Garage.)
   }
 
   // ---------------------------------------------------------------- world staging
@@ -244,14 +243,18 @@ export class Game implements GameApi {
     this.menus.showTitle();
   }
   openGarage(tab?: GarageTab) {
-    this.stageParked('garage');
+    // From the title the same parked car just gets the turntable camera; from a run, park a fresh one.
+    if (this.phase === 'title') this.view.camMode = 'garage';
+    else this.stageParked('garage');
+    this.hud.hide();
     this.phase = 'garage';
     this.audio.music.setDrive(false);
     this.menus.showGarage(tab);
   }
   closeGarage() {
-    void this.garageReturn;
-    this.toTitle();
+    this.view.camMode = 'title';
+    this.phase = 'title';
+    this.menus.showTitle();
   }
   pause() {
     if (this.phase !== 'playing' && this.phase !== 'ready') return;
@@ -341,6 +344,7 @@ export class Game implements GameApi {
       topSpeed: sim.stats.topSpeed,
       canRevive: !sim.reviveUsed && this.run.kind !== 'custom',
       canEdit: this.run.kind === 'custom' && this.run.fromEditor,
+      custom: this.run.kind === 'custom',
     });
   }
 
@@ -385,6 +389,7 @@ export class Game implements GameApi {
       canEdit: this.run.kind === 'custom' && this.run.fromEditor,
       bestMultiplier: sim.stats.bestComboLevel + 1,
       batteryPct: Math.round(sim.finishBattery * 100),
+      custom: this.run.kind === 'custom',
     });
   }
 
@@ -470,7 +475,9 @@ export class Game implements GameApi {
   // ---------------------------------------------------------------- loop
   private stepSim() {
     const sim = this.sim;
-    const inp = this.driver && this.phase === 'playing' ? this.driver.input(sim, STEP) : this.phase === 'playing' ? this.input.sample() : { gas: 0, brake: 0, jump: false };
+    let inp = { gas: 0, brake: 0, jump: false };
+    if (this.phase === 'playing') inp = this.driver ? this.driver.input(sim, STEP) : this.input.sample();
+    else if (this.phase === 'ready') this.input.sample(); // lets a gamepad trigger leave the ready state
     sim.step(STEP, inp);
     if (sim.events.length) {
       for (const e of sim.events) this.onEvent(e);
@@ -576,7 +583,7 @@ export class Game implements GameApi {
       this.phase = 'completed';
       this.sim.status = 'completed';
       this.sim.finishBattery = 0.72;
-      this.sim.stats.bestComboLevel = 8;
+      this.sim.stats.bestComboLevel = CFG.comboMaxLevel;
       this.showComplete();
     }
     if (qa.has('freeze')) setTimeout(() => (this.frozen = true), Number(qa.get('freeze')) || 1500);

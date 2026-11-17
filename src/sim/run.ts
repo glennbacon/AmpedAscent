@@ -89,6 +89,7 @@ export class RunSim {
   private collected = new Set<number>();
   private lastSyncX = -1e9;
   private sinceCharge = 0;
+  private comboCharge = 0;
   private airRot = 0;
   private lastAngle = 0;
   private wheelieT = 0;
@@ -103,6 +104,9 @@ export class RunSim {
   private crossings = new Map<number, { t0: number; credited: boolean }>();
   private roofWas = false;
   private takeoffRamp: PlacedProp | null = null;
+  /** The pack hit zero: no drive (and no regen trickle) until an energy cell is collected. */
+  depleted = false;
+  private jetLock = 0;
 
   constructor(readonly track: Track, readonly loadout: Loadout) {
     this.vstats = deriveStats(loadout);
@@ -173,7 +177,7 @@ export class RunSim {
       g,
       surface: (x) => tr.surface(x),
       slopeAngle: (x) => Math.atan(tr.slope(x)),
-      hasCharge: this.battery > 0,
+      hasCharge: !this.depleted,
       turbo: this.powerups.isActive('turbo'),
       wheelieAssist: this.powerups.isActive('wheelie'),
       flipMaster: this.powerups.isActive('backflip'),
@@ -220,9 +224,14 @@ export class RunSim {
     else if (this.status === 'completed') inp = { gas: 0, brake: v.speed > 1.2 ? 1 : 0, jump: false };
     const ctx = this.ctx(g);
 
-    this.jumpReady = this.powerups.isActive('jumpjets') && v.canJump(ctx);
+    // One burst per ground contact: the wheels stay planted for a few steps after the kick, so a
+    // short lock stops a held/double press from stacking impulses.
+    if (this.jetLock > 0) this.jetLock -= dt;
+    this.jumpReady = this.powerups.isActive('jumpjets') && this.jetLock <= 0 && v.canJump(ctx);
     if (inp.jump && this.jumpReady && this.status === 'playing' && this.live) {
       v.fireJets(g);
+      this.jetLock = 0.4;
+      this.jumpReady = false;
       this.emit({ t: 'jets', x: v.x, y: v.y });
     }
 
@@ -255,6 +264,7 @@ export class RunSim {
       this.sinceCharge += dt;
       if (this.sinceCharge >= CFG.comboDecaySeconds) {
         st.comboLevel--;
+        this.comboCharge = 0;
         this.sinceCharge = 0;
         this.emit({ t: 'combo', multiplier: this.multiplier });
       }
@@ -386,9 +396,10 @@ export class RunSim {
     if (v.throttle > 0) this.battery -= CFG.batteryDrainPerSec * v.throttle * dt;
     else {
       this.battery -= CFG.batteryIdleDrainPerSec * dt;
-      if (Math.abs(v.speed) > 5 && v.anyGrounded) this.battery += CFG.batteryRegenPerSec * dt;
+      if (!this.depleted && Math.abs(v.speed) > 5 && v.anyGrounded) this.battery += CFG.batteryRegenPerSec * dt;
     }
     this.battery = clamp(this.battery, 0, CFG.batteryCapacity);
+    if (this.battery <= 0) this.depleted = true;
     const low = this.batteryFraction < CFG.lowBatteryFraction;
     if (low && !this.lowWarned) this.emit({ t: 'lowBattery' });
     this.lowWarned = low;
@@ -428,9 +439,14 @@ export class RunSim {
       this.emit({ t: 'pickup', kind: 'coin', x: p.x, y: p.y, value: n });
     } else if (p.kind === 'energy') {
       this.battery = Math.min(CFG.batteryCapacity, this.battery + CFG.energyPickupCharge);
+      this.depleted = false;
       const before = st.comboLevel;
-      const bump = this.powerups.isActive('stuntfever') ? 2 : 1;
-      st.comboLevel = Math.min(CFG.comboMaxLevel, st.comboLevel + bump);
+      // Combo climbs one step per `comboPickupsPerLevel` cells (Stunt Fever counts each cell twice).
+      this.comboCharge += this.powerups.isActive('stuntfever') ? 2 : 1;
+      while (this.comboCharge >= CFG.comboPickupsPerLevel) {
+        this.comboCharge -= CFG.comboPickupsPerLevel;
+        st.comboLevel = Math.min(CFG.comboMaxLevel, st.comboLevel + 1);
+      }
       st.bestComboLevel = Math.max(st.bestComboLevel, st.comboLevel);
       this.sinceCharge = 0;
       this.emit({ t: 'pickup', kind: 'energy', x: p.x, y: p.y, value: CFG.energyPickupCharge });
@@ -573,7 +589,7 @@ export class RunSim {
     }
     if (this.strandT > CFG.wreckDwellSeconds) return this.end('wrecked');
 
-    if (this.battery <= 0) {
+    if (this.depleted) {
       this.emptyT += dt;
       if (Math.abs(v.speed) < 0.9 && !v.airborne) this.stillT += dt;
       else this.stillT = 0;
@@ -602,6 +618,7 @@ export class RunSim {
     this.vehicle = this.spawnVehicle(x, 1);
     if (this.powerups.isActive('rollbar')) this.vehicle.setRollBar(true);
     this.battery = Math.max(this.battery, CFG.batteryCapacity * 0.6);
+    this.depleted = false;
     this.status = 'playing';
     this.endCause = null;
     this.reviveUsed = true;

@@ -170,6 +170,15 @@ export class SkyView {
     }
   }
 
+  setShadowQuality(on: boolean, size: number) {
+    this.sun.castShadow = on;
+    if (on && this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.mapSize.set(size, size);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+  }
+
   private drawSky(a: WorldDef, b: WorldDef, t: number) {
     const key = `${a.id}|${b.id}|${Math.round(t * 60)}`;
     if (key === this.skyKey) return;

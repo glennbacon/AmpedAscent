@@ -52,6 +52,7 @@ export class WorldView {
   setSim(sim: RunSim) {
     this.sim = sim;
     this.terrain.decorDensity = this.gfx.spec.decor;
+    this.sky.setShadowQuality(this.gfx.spec.shadows, this.gfx.spec.shadowSize);
     this.terrain.setTrack(sim.track);
     this.props.setSim(sim);
     this.pickups.clear();

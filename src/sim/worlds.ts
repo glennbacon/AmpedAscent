@@ -84,7 +84,7 @@ export const WORLDS: Record<WorldId, WorldDef> = {
     decor: 'snow',
     ambient: ['stars', 'aurora', 'snow'],
     celestial: { kind: 'moon', color: 0xfbfaf3, x: 0.38, y: 0.3, size: 0.07 },
-    dust: 0xe8f1ff,
+    dust: 0x9fb2d2,
     accent: 0x78ffb4,
     exposure: 1.05,
   },

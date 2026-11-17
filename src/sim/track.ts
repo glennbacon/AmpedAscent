@@ -300,7 +300,15 @@ interface Segment {
 }
 
 export const endlessAmpMul = (m: number) =>
-  CFG.ampFloor + (CFG.ampCeil - CFG.ampFloor) * smoothstep((m - CFG.hookM) / (CFG.rampEndM - CFG.hookM));
+  Math.min(
+    CFG.ampMax,
+    CFG.ampFloor + (CFG.ampCeil - CFG.ampFloor) * smoothstep((m - CFG.hookM) / (CFG.rampEndM - CFG.hookM)) + Math.max(0, (m - CFG.rampEndM) / 1000) * CFG.ampCreepPerKm,
+  );
+/** Metres between energy cells: dense through the hook, thinning steadily — the run's fuel curve. */
+export const endlessEnergyGap = (m: number) => {
+  const t = clamp((m - CFG.hookM) / (1300 - CFG.hookM), 0, 1);
+  return Math.min(110, lerp(16, 46, t) + Math.max(0, (m - 1300) / 1000) * 7);
+};
 export const endlessSpiceMul = (m: number) => smoothstep((m - CFG.hookM) / (CFG.rampEndM - CFG.hookM));
 
 export class EndlessTrack extends Track {
@@ -527,9 +535,8 @@ export class EndlessTrack extends Track {
     while (this.nextEnergyX < target) {
       const x = this.nextEnergyX;
       const k = this.energyCount++;
-      const t = clamp((x - 400) / 1200, 0, 1);
-      let gap = x >= 1600 ? 36 + hash01(this.seed, 0xe1, k) * 10 : lerp(15.3, 33, t) + hash01(this.seed, 0xe1, k) * lerp(8, 10, t);
-      if (x >= 1600 && hash01(this.seed, 0xe2, k) < 0.15) gap *= 1.6;
+      let gap = endlessEnergyGap(x) + hash01(this.seed, 0xe1, k) * lerp(8, 12, clamp(x / 1300, 0, 1));
+      if (x >= 1300 && hash01(this.seed, 0xe2, k) < 0.15) gap *= 1.5; // the occasional dry stretch
       if (!this.blocked(x)) this.push('energy', x, this.surface(x) + 1.35);
       this.nextEnergyX = x + gap;
     }
@@ -548,7 +555,7 @@ export class EndlessTrack extends Track {
           this.push('coin', cx, clamp(local + 1.25 + arc, local + 1.2, local + 5.5));
         }
       }
-      this.nextCoinX = x + lerp(22.7, 43, t) + hash01(this.seed, 0xc4, k) * lerp(13.3, 10, t);
+      this.nextCoinX = x + lerp(26, 60, t) + hash01(this.seed, 0xc4, k) * 14;
     }
     // Power-ups: one roll per 24 m chunk; the chunk at 48–72 m always pays (the hook guarantee).
     while (this.nextChunk * 24 < target) {

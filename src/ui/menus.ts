@@ -50,6 +50,7 @@ export interface GameOverData {
   topSpeed: number;
   canRevive: boolean;
   canEdit: boolean;
+  custom: boolean;
 }
 
 export interface CompleteData {
@@ -66,6 +67,7 @@ export interface CompleteData {
   canEdit: boolean;
   bestMultiplier: number;
   batteryPct: number;
+  custom: boolean;
 }
 
 export class Menus {
@@ -410,8 +412,13 @@ export class Menus {
     }));
     const fs = btn('Fullscreen', this.tap(() => {
       const el = document.documentElement as any;
-      if (document.fullscreenElement) void document.exitFullscreen();
-      else void (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
+      // Optional everywhere: phones and embedded views may refuse it.
+      try {
+        const p = document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
+        if (p && typeof p.catch === 'function') p.catch(() => this.toast('Fullscreen is not available here', true));
+      } catch {
+        this.toast('Fullscreen is not available here', true);
+      }
     }), { icon: 'expand', cls: 'small ghost' });
     this.sheet(
       'settings', 'Settings', null,
@@ -526,7 +533,8 @@ export class Menus {
           g.endless ? h('div', null, h('b', null, `${fmt(g.best)} m`), h('small', null, 'BEST')) : null,
           h('div', null, h('b', null, `×${g.bestMultiplier}`), h('small', null, 'BEST COMBO'))),
         rows,
-        s.affordableUpgrade() && !g.canEdit ? h('p', { class: 'note', html: 'You can afford an <b>upgrade</b> — visit the Garage.' }) : null)],
+        g.custom ? h('p', { class: 'note' }, 'Player-built levels are for fun — they do not bank coins.')
+          : s.affordableUpgrade() ? h('p', { class: 'note', html: 'You can afford an <b>upgrade</b> — visit the Garage.' }) : null)],
       foot,
     );
     this.screen!.querySelector('header')!.remove();
@@ -563,7 +571,8 @@ export class Menus {
       'complete', '', null,
       [h('div', { class: 'result' },
         h('div', { class: 'headline win' }, 'LEVEL COMPLETE'), h('div', { class: 'subline' }, `${c.title} · ${c.time.toFixed(1)} s`),
-        c.campaignLevel != null ? starRow : null, rows)],
+        c.campaignLevel != null ? starRow : null, rows,
+        c.custom ? h('p', { class: 'note' }, 'Player-built levels are for fun — they do not bank coins.') : null)],
       foot,
     );
     this.screen!.querySelector('header')!.remove();

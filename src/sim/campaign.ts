@@ -143,7 +143,7 @@ export function generateLevel(id: string): LevelData | null {
   const bar: number = Math.min(slopeBar(world), Math.max(0.7, steep + 0.04));
   let kSpice = 1;
   let kAll = 1;
-  for (let pass = 0; pass < 6; pass++) {
+  for (let pass = 0; pass < 10; pass++) {
     const h0 = raw(0, kSpice, kAll);
     let worst = 0;
     for (let i = 0; i < n; i++) {
@@ -152,9 +152,9 @@ export function generateLevel(id: string): LevelData | null {
       heights[i] = (raw(x, kSpice, kAll) - h0) * ease;
       if (i > 0) worst = Math.max(worst, (heights[i] - heights[i - 1]) / step);
     }
-    if (worst <= bar) break;
-    if (kSpice > 0.15 && steep > 0) kSpice *= Math.max(0.5, (bar / worst) * 0.92);
-    else kAll *= (bar / worst) * 0.97;
+    if (worst <= bar * 0.955) break; // headroom: the spline between samples can run a touch steeper
+    if (kSpice > 0.15 && steep > 0) kSpice *= Math.max(0.5, (bar / worst) * 0.9);
+    else kAll *= (bar / worst) * 0.94;
   }
 
   const level0: LevelData = { v: 1, name: `${def.name} ${level}`, world: def.id, length, step, heights, pickups: [], props: [] };
@@ -219,7 +219,7 @@ export function generateLevel(id: string): LevelData | null {
   const scarcity = (level - 1) / (CAMPAIGN.levelsPerWorld - 1);
   for (let x = 14; x < length - 10; x += rng.range(lerp(18, 30, scarcity), lerp(30, 46, scarcity))) if (!blocked(x)) add('energy', x, 1.35);
   // Coin arcs.
-  for (let x = 24; x < length - 16; x += rng.range(28, 44)) {
+  for (let x = 24; x < length - 16; x += rng.range(38, 62)) {
     const lift = rng.range(0.9, 2.2);
     if (blocked(x) || blocked(x + 6.5)) continue;
     for (let i = 0; i < 5; i++) add('coin', x + i * 1.3, 1.25 + Math.sin((i / 4) * Math.PI) * lift);

@@ -1,6 +1,8 @@
 // End-to-end smoke: boot → Endless → drive with the keyboard → pause/resume → game over → garage → adventure → editor.
 import { createRequire } from 'node:module';
-const require = createRequire('/opt/node-tools/node_modules/');
+// Playwright is not a project dependency: use a local install if present, else the machine-wide one.
+let require = createRequire(import.meta.url);
+try { require.resolve('playwright'); } catch { require = createRequire(process.env.PLAYWRIGHT_DIR ?? '/opt/node-tools/node_modules/'); }
 const { chromium } = require('playwright');
 const S = process.argv[2];
 const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });

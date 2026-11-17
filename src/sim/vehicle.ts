@@ -366,7 +366,17 @@ export class Vehicle {
     // Standing on its tail or roof the car cannot drive itself along the ground.
     const slopeHere = ctx.slopeAngle(this.x);
     const tipped = Math.abs(wrapAngle(this.angle - slopeHere)) > 1.3 && (this.hullContact || this.roofContact);
-    const gas = ctx.hasCharge && !tipped ? clamp(inp.gas, 0, 1) : 0;
+    let gas = ctx.hasCharge && !tipped ? clamp(inp.gas, 0, 1) : 0;
+    // Wheelie guard (traction control): with only the rear axle down, power fades as the nose
+    // climbs past ~40°, so flooring it rides a wheelie instead of looping the car onto its roof.
+    // Momentum and air rotation can still take it over — this only stops the motor doing it.
+    if (gas > 0 && this.grounded[REAR] && !this.grounded[FRONT] && !ctx.loop) {
+      const tilt = wrapAngle(this.angle - slopeHere);
+      // Wheelie Time holds its own (steeper) angle: ease the motor off as the nose reaches it so the
+      // drive reaction never throws the car past the balance point.
+      if (ctx.wheelieAssist) gas *= clamp(1 - (tilt - CFG.wheelieAssistAngle + 0.3) / 0.45, 0.25, 1);
+      else gas *= 1 - smoothstep((tilt - CFG.wheelieGuardStart) / (CFG.wheelieGuardEnd - CFG.wheelieGuardStart));
+    }
     const brake = clamp(inp.brake, 0, 1);
     const shares = st.fourWD ? [1, CFG.fourWDFrontShare] : [1, 0];
     const wheelSpeed = (i: number) => -(this.wheels[i].getAngularVelocity() - this.carriers[i].getAngularVelocity()) * r; // + = forward
@@ -433,8 +443,13 @@ export class Vehicle {
       const oneAxle = this.grounded[REAR] !== this.grounded[FRONT];
       if (ctx.wheelieAssist && gas > 0 && this.grounded[REAR] && !inLoop) {
         // Wheelie Time: PD-balance on the rear axle at a show-off angle; can never loop over.
-        const err = wrapAngle(slopeHere + CFG.wheelieAssistAngle - this.angle);
-        torque = this.inertia * clamp(16 * err - 5.5 * omega, -34, 34);
+        // Gravity feed-forward carries the nose's weight about the rear contact; the PD only trims.
+        const tilt = wrapAngle(this.angle - slopeHere);
+        const err = CFG.wheelieAssistAngle - tilt;
+        const lever = (CFG.wheelBaseHalf + st.comX) * s * Math.cos(this.angle) + (CFG.wheelRadius - CFG.wheelRestY + CFG.comY) * s * -Math.sin(this.angle);
+        const hold = this.totalMass * ctx.g * Math.max(0, lever) * 0.92;
+        torque = hold + this.inertia * clamp(26 * err - 11 * omega, -45, 45);
+        if (tilt > CFG.wheelieAssistAngle + 0.3) torque = Math.min(torque, -this.inertia * 25); // hard anti-flip ceiling
       } else if (oneAxle && pitch !== 0 && !inLoop) {
         torque = pitch * this.inertia * CFG.groundLeanAccel * (giant ? CFG.superAirMul : 1);
       }
