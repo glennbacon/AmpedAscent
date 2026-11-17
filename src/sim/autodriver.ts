@@ -16,7 +16,8 @@ export class AutoDriver {
     const v = sim.vehicle;
     const out: SimInput = { gas: 1, brake: 0, jump: false };
     this.jumpT -= dt;
-    if (sim.jumpReady && this.jumpT <= 0) {
+    // Jets on a steep face only bounce the car off its own traction — keep them for open ground.
+    if (sim.jumpReady && this.jumpT <= 0 && Math.abs(sim.track.slope(v.x)) < 0.35 && Math.abs(sim.track.slope(v.x + 8)) < 0.5) {
       out.jump = true;
       this.jumpT = 1.6;
     }

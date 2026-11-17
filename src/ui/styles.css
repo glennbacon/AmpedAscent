@@ -232,6 +232,11 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 .lvl .pips { display: flex; gap: 2px; color: #3a4257; font-size: 0.55em; }
 .lvl .pips .on { color: var(--gold); }
 .lvl small { font: 500 0.46em var(--body); color: var(--muted); }
+.lvl .req { display: inline-flex; align-items: center; gap: 0.25em; font: 700 0.46em var(--display); color: var(--muted); }
+.lvl .req .ico { width: 1.1em; height: 1.1em; }
+.lvl .req.under { color: var(--warn); }
+.lvl .req.far { color: var(--bad); }
+.worldhead .mine { color: var(--accent); font-family: var(--display); }
 .lvl.done { border-color: #3d6a78; }
 .lvl.next { border-color: var(--accent); box-shadow: 0 0 12px rgba(40, 224, 255, 0.35); }
 .lvl.locked { opacity: 0.45; cursor: default; }
@@ -247,6 +252,10 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 @keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
 .garage .gtop { position: absolute; left: calc(14px + var(--safe-l)); top: calc(12px + var(--safe-t)); display: flex; gap: 8px; align-items: center; }
 .garage .gtitle { font: 700 1.5em var(--display); letter-spacing: 0.08em; font-style: italic; text-shadow: 0 2px 8px #000; }
+.rating { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 12px; padding: 10px 14px 8px; border-bottom: 1.5px solid var(--line); background: rgba(40, 224, 255, 0.06); }
+.rating span { display: inline-flex; align-items: center; gap: 0.45em; font: 700 0.9em var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.rating b { grid-row: 1 / span 2; grid-column: 2; font: 700 2.3em/1 var(--display); color: var(--accent); font-variant-numeric: tabular-nums; text-shadow: 0 0 18px rgba(40, 224, 255, 0.45); }
+.rating small { color: var(--muted); font-size: 0.76em; line-height: 1.3; margin-top: 2px; }
 .tabs { display: flex; gap: 4px; padding: 8px 8px 0; }
 .tab { pointer-events: auto; cursor: pointer; flex: 1; min-height: 42px; border: 0; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted); font: 700 0.95em var(--display); letter-spacing: 0.06em; text-transform: uppercase;
   display: flex; align-items: center; justify-content: center; gap: 0.4em; border-bottom: 3px solid transparent; }

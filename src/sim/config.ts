@@ -10,7 +10,7 @@ export const CFG = {
   // ---- World ---------------------------------------------------------------
   gravity: 23, // m/s² — roughly 2× Hill Climb Racing in car-lengths/s²: weighty, not floaty
   fallGravityMul: 1.22, // extra pull while airborne AND descending (snappy landings)
-  airDrag: 0.016, // quadratic drag coefficient (caps runaway downhill speed)
+  airDrag: 0.013, // quadratic drag coefficient (caps runaway downhill speed; low enough that every tier reaches its top speed)
 
   // ---- Vehicle geometry (chassis-local metres) -----------------------------
   wheelBaseHalf: 1.28,
@@ -44,15 +44,15 @@ export const CFG = {
   topSpeed: 15.5, // m/s stock
   driveForce: 150, // N of tractive force at the tyre, stock (≈0.55 g launch)
   powerBaseFrac: 0.5, // constant torque below this fraction of top speed, constant power above
-  motorTierForce: 0.2, // +fraction per Motor tier
-  motorTierSpeed: 0.18, // +fraction per Motor tier (maxed ≈ 29.5 m/s)
+  motorTierForce: 0.11, // +fraction per Motor tier
+  motorTierSpeed: 0.14, // +fraction per Motor tier (maxed ≈ 26.4 m/s)
   reverseForceFrac: 0.7,
   reverseSpeedFrac: 0.42,
   brakeForce: 330, // N, both axles
   coastBrakeForce: 14, // N of engine-braking/regen while off the pedals
   wheelGrip: 0.95, // tyre friction coefficient, stock
-  tractionTier: 0.15, // +fraction per Traction tier (maxed 1.66)
-  fourWDFrontShare: 0.4, // EXTRA tractive force through the front axle with 4WD engaged (rear keeps 1.0)
+  tractionTier: 0.09, // +fraction per Traction tier (maxed 1.38)
+  fourWDFrontShare: 0.14, // EXTRA tractive force through the front axle with 4WD engaged (rear keeps 1.0); worth ≈1.5 climb ratings
   wheelAngularDamping: 0.25,
   wheelieGuardStart: 0.7, // rad of nose-up (vs the slope) where rear-only drive starts to fade
   wheelieGuardEnd: 1.2, // …and is fully cut
@@ -69,7 +69,8 @@ export const CFG = {
 
   // ---- Battery -------------------------------------------------------------
   batteryCapacity: 100,
-  batteryDrainPerSec: 6.4, // full throttle
+  batteryDrainPerSec: 6.4, // full throttle at top speed
+  batteryDrainFloor: 0.6, // fraction still drawn at a crawl (a slow climb costs less than a flat-out sprint)
   batteryIdleDrainPerSec: 1.1,
   batteryRegenPerSec: 2.2, // coasting/braking at speed
   energyPickupCharge: 26,
@@ -111,6 +112,7 @@ export const CFG = {
   superShrinkDeferSeconds: 4,
   flipMasterGravityMul: 0.72,
   wheelieAssistAngle: 0.92, // rad (~53°) held while Wheelie Time burns
+  wheelieAssistMaxSlope: 0.3, // rad of uphill beyond which Wheelie Time stands down (climbs need the drive)
   rescueGraceSeconds: 3.5, // stunt assists keep self-righting this long after they expire
 
   // ---- Run rules -----------------------------------------------------------
@@ -133,11 +135,32 @@ export const CFG = {
   rampEndM: 2500,
   ampFloor: 0.6,
   ampCeil: 1.25,
-  ampCreepPerKm: 0.05, // past rampEndM the hills keep growing, slowly, for ever-harder long runs
-  ampMax: 1.6,
+  ampCreepPerKm: 0.03, // past rampEndM the rollers keep growing a little (the climbs are the real ramp)
+  ampMax: 1.4,
   seamMinM: 800,
   seamMaxM: 1000,
   seamBlendHalfM: 28,
+
+  // ---- Climbs: the upgrade walls (see sim/climbs.ts) ----------------------
+  climbMargin: 0.05, // a climb's face is this much shallower than the capacity of a car AT its rating
+  climbHeightBase: 24, // m of rise at rating 0…
+  climbHeightPerRating: 4, // …plus this per rating (faster cars carry more momentum)
+  climbHeightMin: 12,
+  climbHeightMax: 48,
+  climbFillet: 6, // m of eased transition at the foot and the top of the face
+  climbSummit: 12, // m of level summit
+  climbDescentShare: 0.65, // fraction of the height given back on the far side (the rest is net ascent)
+  climbDescentSlope: 0.45,
+  climbDescentFillet: 10,
+  climbDamp: 0.96, // how much of the rolling terrain is flattened on a climb (faces stay clean ramps)
+  climbBlendM: 26, // distance over which the rolling terrain fades out before/after a climb
+  endlessFirstClimbM: 300,
+  endlessClimbGap: [130, 210] as readonly [number, number], // rolling ground between climbs
+  /** Endless: [distance m, climb rating]. Stock walls out around the third climb; each tier buys ~a climb or two. */
+  endlessClimbRatings: [
+    [300, -1.6], [550, 0], [950, 1], [1450, 2], [2050, 3], [2750, 4], [3600, 5], [4600, 6], [5800, 6.8], [7500, 7],
+  ] as readonly (readonly [number, number])[],
+  summitReward: 8, // coins (× combo) for topping a climb, plus this again per rating above stock
 
   // ---- Economy -------------------------------------------------------------
   upgradeBaseCost: 800,

@@ -2,7 +2,7 @@
 // the biome's lights. Everything cross-fades with the track's biome blend, so seams never pop.
 
 import * as THREE from 'three';
-import { lerp } from '../sim/config';
+import { clamp, lerp } from '../sim/config';
 import { BiomeBlend } from '../sim/track';
 import { WorldDef } from '../sim/worlds';
 import { Gfx, softSprite } from './gfx';
@@ -48,6 +48,7 @@ export class SkyView {
   private aurora: THREE.Mesh[] = [];
   private layers: { mesh: THREE.Mesh; period: number; z: number; lift: number }[] = [];
   private camGroup = new THREE.Group();
+  private refY: number | null = null;
 
   constructor(private gfx: Gfx) {
     const scene = gfx.scene;
@@ -201,6 +202,9 @@ export class SkyView {
 
   update(bl: BiomeBlend, focusX: number, focusY: number, time: number) {
     const { a, b, t } = bl;
+    const camY = this.gfx.camera.position.y;
+    if (this.refY === null || Math.abs(camY - this.refY) > 120) this.refY = camY;
+    this.refY += (camY - this.refY) * 0.012;
     this.drawSky(a, b, t);
     mixHex(a.fog.color, b.fog.color, t, this.fog.color);
     this.fog.near = lerp(a.fog.near, b.fog.near, t);
@@ -260,7 +264,9 @@ export class SkyView {
       // Aerial perspective by hand: the farther the range, the more horizon haze it takes on.
       mixHex(a.backdrop[i], b.backdrop[i], t, m.color).lerp(mixHex(a.sky[3], b.sky[3], t, _c1), [0.5, 0.3, 0.14][i]);
       L.mesh.position.x = Math.round(cam.position.x / L.period) * L.period;
-      L.mesh.position.y = cam.position.y * (0.82 + i * 0.05);
+      // The track climbs without bound, so the ranges ride the camera's altitude; a slow-following
+      // reference leaves just enough lag for vertical parallax on a climb or a drop.
+      L.mesh.position.y = cam.position.y - clamp(cam.position.y - (this.refY ?? cam.position.y), -40, 40) * (0.2 - i * 0.05);
     }
   }
 }

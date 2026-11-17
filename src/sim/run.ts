@@ -6,6 +6,7 @@ import { CFG, clamp, wrapAngle } from './config';
 import { LoopBody, PhysWorld } from './physics';
 import { POWERUPS, PowerupKind, PowerupState, isPowerupKind } from './powerups';
 import { PickupDef, PickupKind, PlacedProp, Track, loopGeom, rampGeom } from './track';
+import { carRating, formatRating } from './climbs';
 import { deriveStats, Loadout, VehicleStats } from './upgrades';
 import { Vehicle, VehicleCtx } from './vehicle';
 
@@ -30,6 +31,7 @@ export type SimEvent =
   | { t: 'loopSmash'; x: number; y: number }
   | { t: 'roofHit'; x: number; y: number; speed: number }
   | { t: 'lowBattery' }
+  | { t: 'stall'; rating: number } // stuck on a climb's face with the pedal down
   | { t: 'combo'; multiplier: number }
   | { t: 'ended'; cause: EndCause }
   | { t: 'completed' };
@@ -47,6 +49,7 @@ export interface RunStats {
   bestComboLevel: number;
   topSpeed: number;
   airTimeTotal: number;
+  climbs: number; // climbs topped
 }
 
 export interface ActivePickup {
@@ -60,7 +63,7 @@ export interface ActivePickup {
 
 const newStats = (): RunStats => ({
   distance: 0, coins: 0, pickupCoins: 0, stuntCoins: 0, flips: 0, loops: 0, bigAirs: 0, stunts: 0,
-  comboLevel: 0, bestComboLevel: 0, topSpeed: 0, airTimeTotal: 0,
+  comboLevel: 0, bestComboLevel: 0, topSpeed: 0, airTimeTotal: 0, climbs: 0,
 });
 
 export class RunSim {
@@ -104,12 +107,19 @@ export class RunSim {
   private crossings = new Map<number, { t0: number; credited: boolean }>();
   private roofWas = false;
   private takeoffRamp: PlacedProp | null = null;
+  /** This car's climb rating (see sim/climbs.ts) — what the walls are measured against. */
+  readonly climbRating: number;
+  /** The last climb the car stalled on (the end card uses it to explain the run). */
+  lastStall: { rating: number; x: number; time: number } | null = null;
+  private climbState = new Map<number, { announced: boolean; topped: boolean; stallT: number }>();
+  private stallCooldown = 0;
   /** The pack hit zero: no drive (and no regen trickle) until an energy cell is collected. */
   depleted = false;
   private jetLock = 0;
 
   constructor(readonly track: Track, readonly loadout: Loadout) {
     this.vstats = deriveStats(loadout);
+    this.climbRating = carRating(loadout);
     this.phys = new PhysWorld(track);
     this.phys.sync(0);
     this.vehicle = this.spawnVehicle(0, 1);
@@ -254,6 +264,7 @@ export class RunSim {
     this.updatePickups(dt);
     this.updatePowerups(dt, g);
     this.updateCrossings();
+    this.updateClimbs(dt, inp);
     this.updateEndConditions(dt, ctx, g);
 
     const st = this.stats;
@@ -394,7 +405,11 @@ export class RunSim {
   // ---- battery --------------------------------------------------------------------------------
   private updateBattery(dt: number, inp: SimInput) {
     const v = this.vehicle;
-    if (v.throttle > 0) this.battery -= CFG.batteryDrainPerSec * v.throttle * dt;
+    if (v.throttle > 0) {
+      // Draw scales with how fast the motor is turning: crawling up a wall costs less than sprinting.
+      const load = CFG.batteryDrainFloor + (1 - CFG.batteryDrainFloor) * Math.min(1, Math.abs(v.speed) / Math.max(1, v.topSpeedNow));
+      this.battery -= CFG.batteryDrainPerSec * v.throttle * load * dt;
+    }
     else {
       this.battery -= CFG.batteryIdleDrainPerSec * dt;
       if (!this.depleted && Math.abs(v.speed) > 5 && v.anyGrounded) this.battery += CFG.batteryRegenPerSec * dt;
@@ -558,6 +573,36 @@ export class RunSim {
           if (p.kind === 'halfpipe') this.earnStunt('PIPE SWOOP!', CFG.pipeSwoopReward);
           else this.earnStunt('DECK RUN!', CFG.deckRunReward);
         }
+      }
+    }
+  }
+
+  // ---- climbs: announce the wall, pay the summit, notice a stall ---------------------------------
+  private updateClimbs(dt: number, inp: SimInput) {
+    const v = this.vehicle;
+    const x = v.x;
+    if (this.stallCooldown > 0) this.stallCooldown -= dt;
+    for (const c of this.track.climbsIn(x - 6, x + 30)) {
+      let st = this.climbState.get(c.index);
+      if (!st) this.climbState.set(c.index, (st = { announced: false, topped: false, stallT: 0 }));
+      if (!st.announced && x > c.x0 - 24 && x < c.riseEnd) {
+        st.announced = true;
+        // Rated against THIS car: amber when the wall is above what it can hold.
+        this.popup(`CLIMB ${formatRating(c.rating)}`, c.rating > this.climbRating + 0.2 ? 'warn' : 'info');
+      }
+      if (st.announced && !st.topped && x > c.riseEnd + 1.5) {
+        st.topped = true;
+        this.stats.climbs++;
+        this.earnStunt('SUMMIT!', Math.round(CFG.summitReward * (1 + Math.max(0, c.rating))));
+      }
+      const onFace = x > c.x0 + 3 && x < c.riseEnd - 1;
+      if (onFace && inp.gas > 0.5 && v.speed < 1.2 && !v.airborne) st.stallT += dt;
+      else st.stallT = Math.max(0, st.stallT - dt * 2);
+      if (st.stallT > 1.3 && this.stallCooldown <= 0) {
+        st.stallT = 0;
+        this.stallCooldown = 9;
+        this.lastStall = { rating: c.rating, x, time: this.time };
+        this.emit({ t: 'stall', rating: c.rating });
       }
     }
   }

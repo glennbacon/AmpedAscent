@@ -3,7 +3,8 @@
 
 import { AudioEngine, MOTOR_VOICES } from '../audio/audio';
 import { MAX_LEVELS, Save } from '../core/save';
-import { CAMPAIGN, firstClearBonus, isUnlocked, levelId, levelLength, starCount, worldOfLevel } from '../sim/campaign';
+import { CAMPAIGN, firstClearBonus, isUnlocked, levelId, levelLength, levelRating, starCount, worldOfLevel } from '../sim/campaign';
+import { carRating, formatRating } from '../sim/climbs';
 import { CFG } from '../sim/config';
 import { EndCause } from '../sim/run';
 import {
@@ -51,6 +52,10 @@ export interface GameOverData {
   canRevive: boolean;
   canEdit: boolean;
   custom: boolean;
+  /** Rating of the climb that stopped the run, if one did. */
+  stalledRating: number | null;
+  carRating: number;
+  climbs: number;
 }
 
 export interface CompleteData {
@@ -165,6 +170,7 @@ export class Menus {
     }
     const def = WORLDS[worldOfLevel(world)];
     const grid = h('div', { class: 'levelgrid' });
+    const mine = carRating(this.api.save.loadout);
     let nextMarked = false;
     for (let l = 1; l <= CAMPAIGN.levelsPerWorld; l++) {
       const id = levelId(world, l);
@@ -173,14 +179,20 @@ export class Menus {
       const isNext = open && !done.has(id) && !nextMarked;
       if (isNext) nextMarked = true;
       const pips = h('span', { class: 'pips', html: [1, 2, 4].map((b) => `<span class="${mask & b ? 'on' : ''}">${icon('star')}</span>`).join('') });
-      const cell = h('button', { class: `lvl${done.has(id) ? ' done' : ''}${isNext ? ' next' : ''}${open ? '' : ' locked'}`, type: 'button', title: open ? `${def.name} ${l} — ${levelLength(l)} m` : 'Clear the previous level to unlock' },
-        open ? String(l) : h('span', { html: icon('lock') }), open ? pips : null, h('small', null, `${levelLength(l)} m`));
+      // Each level states the climb rating its steepest wall needs; amber/red when the car is short.
+      const need = levelRating(world, l);
+      const gap = need - mine;
+      const req = h('small', { class: `req${gap > 1 ? ' far' : gap > 0.05 ? ' under' : ''}`, html: `${icon('mountain')}${formatRating(need)}` });
+      const cell = h('button', { class: `lvl${done.has(id) ? ' done' : ''}${isNext ? ' next' : ''}${open ? '' : ' locked'}`, type: 'button',
+        title: open ? `${def.name} ${l} — ${levelLength(l)} m — climb rating ${formatRating(need)} (your car: ${formatRating(mine)})` : 'Clear the previous level to unlock' },
+        open ? String(l) : h('span', { html: icon('lock') }), open ? pips : null, req);
       cell.addEventListener('click', () => {
         if (!open) {
           this.api.audio.deny();
           this.toast(`Clear ${def.name} ${l - 1} first`, true);
           return;
         }
+        if (gap > 0.05) this.toast(`This level's climbs are rated ${formatRating(need)} — your car is ${formatRating(mine)}`);
         this.tap(() => this.api.playCampaign(id))();
       });
       grid.append(cell);
@@ -189,8 +201,8 @@ export class Menus {
       'adventure',
       'Adventure',
       `${total} / ${CAMPAIGN.worlds * CAMPAIGN.levelsPerWorld * 3} stars · every world is open from level 1`,
-      [cards, h('div', { class: 'worldhead' }, h('h3', null, def.name), h('span', null, def.tagline)), grid,
-        h('p', { class: 'note', html: `Three stars per level: <b>finish</b>, hit a <b>×${CFG.masteryComboMultiplier} combo</b>, finish with <b>${Math.round(CFG.masteryBatteryFraction * 100)}% charge</b>.` })],
+      [cards, h('div', { class: 'worldhead' }, h('h3', null, def.name), h('span', { html: `${def.tagline} &nbsp;·&nbsp; Your climb rating <b class="mine">${formatRating(mine)}</b>` })), grid,
+        h('p', { class: 'note', html: `${icon('mountain')} is the climb rating a level's steepest wall needs — raise yours with <b>Motor</b> and <b>Traction</b> in the Garage. Stars: <b>finish</b>, reach a <b>×${CFG.masteryComboMultiplier} combo</b>, finish with <b>${Math.round(CFG.masteryBatteryFraction * 100)}% charge</b>.` })],
       [btn('Back', this.tap(() => this.showTitle()), { icon: 'chevL' })],
       { wide: true, onScrim: () => this.showTitle() },
     );
@@ -207,6 +219,9 @@ export class Menus {
     for (const [label, v] of [['Power', bars.power], ['Top speed', bars.speed], ['Grip', bars.grip], ['Composure', bars.composure], ['Agility', bars.agility]] as const) {
       sb.append(h('span', null, label), h('div', { class: 'sb' }, h('i', { style: { width: `${Math.round(6 + v * 94)}%` } })));
     }
+    const rating = h('div', { class: 'rating' },
+      h('span', { html: `${icon('mountain')} Climb rating` }), h('b', null, formatRating(carRating(lo))),
+      h('small', null, 'Climbs in Endless and Adventure are rated. A car below a climb\'s rating stalls on it — raise Motor and Traction together.'));
     const tabs = h('div', { class: 'tabs', role: 'tablist' });
     for (const [id, label, ic] of [['upgrades', 'Upgrades', 'bolt'], ['tuning', 'Tuning', 'wrench'], ['sound', 'Motor', 'speaker']] as const) {
       const t = h('button', { class: `tab${id === tab ? ' on' : ''}`, type: 'button', role: 'tab', 'aria-selected': String(id === tab), html: `${icon(ic)}<span>${label}</span>` });
@@ -217,7 +232,7 @@ export class Menus {
     if (tab === 'upgrades') this.fillUpgrades(body);
     else if (tab === 'tuning') this.fillTuning(body);
     else this.fillSound(body);
-    const panel = h('div', { class: 'panel' }, sb, tabs, body, h('div', { class: 'gfoot' }, btn('Drive!', this.tap(() => this.api.playEndless()), { icon: 'play', cls: 'primary' })));
+    const panel = h('div', { class: 'panel' }, rating, sb, tabs, body, h('div', { class: 'gfoot' }, btn('Drive!', this.tap(() => this.api.playEndless()), { icon: 'play', cls: 'primary' })));
     const top = h('div', { class: 'gtop' }, btn('', this.tap(() => this.api.closeGarage()), { icon: 'chevL', cls: 'icon', title: 'Back' }), h('div', { class: 'gtitle' }, 'GARAGE'), this.coinChip());
     this.mount('garage', h('div', { class: 'screen garage' }, top, panel));
     void d;
@@ -237,6 +252,14 @@ export class Menus {
         case 'suspension': return `${pct(st.dampRebound, b.dampRebound)} damping · ${pct(st.bumpTravel, b.bumpTravel)} travel`;
         case 'flip': return `×${(1 + CFG.flipTier * tier).toFixed(1)} air rotation`;
       }
+    };
+    // What buying the next tier does to the climb rating (the number the walls are measured in).
+    const now = carRating(s.loadout);
+    const ratingDelta = (id: UpgradeId): string => {
+      if (id !== 'motor' && id !== 'traction') return '';
+      const lo = s.loadout;
+      const next = carRating({ ...lo, tiers: { ...lo.tiers, [id]: lo.tiers[id] + 1 } });
+      return next - now > 0.04 ? `  ·  climb ${formatRating(now)} → ${formatRating(next)}` : '  ·  climb rating held back by the other upgrade';
     };
     for (const id of UPGRADE_IDS) {
       const tier = dev ? CFG.upgradeMaxTier : d.tiers[id];
@@ -258,7 +281,7 @@ export class Menus {
         h('div', { class: `up${maxed ? ' maxed' : ''}` },
           h('h4', null, UPGRADE_INFO[id].name, pips),
           buy,
-          h('p', null, UPGRADE_INFO[id].blurb, ' ', h('span', { class: 'effect' }, maxed ? effect(id, tier) : `${effect(id, tier)}  →  ${effect(id, tier + 1)}`)),
+          h('p', null, UPGRADE_INFO[id].blurb, ' ', h('span', { class: 'effect' }, maxed ? effect(id, tier) : `${effect(id, tier)}  →  ${effect(id, tier + 1)}${ratingDelta(id)}`)),
         ),
       );
     }
@@ -276,7 +299,8 @@ export class Menus {
     }, { icon: owned ? 'check' : 'coin', cls: `small ${can4 && !owned ? 'gold' : ''}`, disabled: owned });
     body.append(
       h('div', { class: 'up' }, h('h4', null, 'Four-wheel drive'), buy4,
-        h('p', null, 'Front axle joins in: +40% pulling power whenever the front tyres bite. Toggle it in Tuning. ', owned ? h('span', { class: 'effect' }, 'Installed') : null)),
+        h('p', null, 'The front axle joins in whenever its tyres bite — the biggest single step up the climb ratings. Toggle it in Tuning. ',
+          h('span', { class: 'effect' }, owned ? 'Installed' : `climb ${formatRating(now)} → ${formatRating(carRating({ ...s.loadout, has4WD: true, tuning: { ...s.loadout.tuning, fourWD: true } }))}`))),
     );
     if (dev) body.append(h('p', { class: 'note' }, 'Developer unlock is ON — the car runs maxed; your save is untouched.'));
   }
@@ -501,8 +525,12 @@ export class Menus {
   // ---------------------------------------------------------------- end cards
   showGameOver(g: GameOverData) {
     const s = this.api.save;
-    const headline = g.newBest ? 'NEW BEST!' : g.cause === 'wrecked' ? 'WRECKED!' : 'OUT OF CHARGE';
-    const sub = g.cause === 'wrecked' ? 'The buggy ended up off its wheels.' : 'The pack ran flat. Grab more green cells next time.';
+
+    const walled = g.stalledRating != null && g.cause !== 'wrecked';
+    const headline = g.newBest ? 'NEW BEST!' : g.cause === 'wrecked' ? 'WRECKED!' : walled ? 'TOO STEEP!' : 'OUT OF CHARGE';
+    const sub = g.cause === 'wrecked' ? 'The buggy ended up off its wheels.'
+      : walled ? `Stopped by a climb rated ${formatRating(g.stalledRating!)} — your car is rated ${formatRating(g.carRating)}.`
+      : 'The pack ran flat. Grab more green cells next time.';
     const rows = h('div', { class: 'rows' },
       h('div', { class: 'row' }, h('span', null, 'Pickups'), h('b', null, `+${fmt(g.pickupCoins)}`)),
       g.stuntCoins ? h('div', { class: 'row' }, h('span', null, `Stunts (${g.stunts})${g.flips ? ` · ${g.flips} flip${g.flips > 1 ? 's' : ''}` : ''}`), h('b', null, `+${fmt(g.stuntCoins)}`)) : null,
@@ -531,9 +559,11 @@ export class Menus {
         h('div', { class: 'bigstat' },
           h('div', null, h('b', null, `${fmt(g.distance)} m`), h('small', null, 'DISTANCE')),
           g.endless ? h('div', null, h('b', null, `${fmt(g.best)} m`), h('small', null, 'BEST')) : null,
-          h('div', null, h('b', null, `×${g.bestMultiplier}`), h('small', null, 'BEST COMBO'))),
+          g.climbs ? h('div', null, h('b', null, String(g.climbs)), h('small', null, g.climbs === 1 ? 'CLIMB TOPPED' : 'CLIMBS TOPPED'))
+            : h('div', null, h('b', null, `×${g.bestMultiplier}`), h('small', null, 'BEST COMBO'))),
         rows,
         g.custom ? h('p', { class: 'note' }, 'Player-built levels are for fun — they do not bank coins.')
+          : walled ? h('p', { class: 'note', html: `That face needs more pull and more bite: upgrade <b>Motor</b> and <b>Traction</b> together${s.affordableUpgrade() ? ' — you can afford one now.' : '.'}` })
           : s.affordableUpgrade() ? h('p', { class: 'note', html: 'You can afford an <b>upgrade</b> — visit the Garage.' }) : null)],
       foot,
     );

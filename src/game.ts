@@ -9,6 +9,7 @@ import { WorldView } from './render/world';
 import { AutoDriver, DriverProfile } from './sim/autodriver';
 import { earnedStars, generateLevel, nextLevelId, parseLevelId, starPayout, STAR_CLEAR } from './sim/campaign';
 import { CFG } from './sim/config';
+import { formatRating } from './sim/climbs';
 import { isPowerupKind, PowerupKind } from './sim/powerups';
 import { RunSim, SimEvent } from './sim/run';
 import { EndlessTrack, FnTrack, LevelData, LevelTrack, PropKind, Track } from './sim/track';
@@ -345,6 +346,10 @@ export class Game implements GameApi {
       canRevive: !sim.reviveUsed && this.run.kind !== 'custom',
       canEdit: this.run.kind === 'custom' && this.run.fromEditor,
       custom: this.run.kind === 'custom',
+      // A stall shortly before the end means the climb, not the battery, ended the run.
+      stalledRating: sim.lastStall && sim.time - sim.lastStall.time < 40 ? sim.lastStall.rating : null,
+      carRating: sim.climbRating,
+      climbs: sim.stats.climbs,
     });
   }
 
@@ -442,6 +447,15 @@ export class Game implements GameApi {
           this.audio.crash();
           haptic(50, hap);
         }
+        break;
+      case 'stall':
+        this.audio.deny();
+        this.showHint(
+          e.rating > this.sim.climbRating + 0.2
+            ? `Too steep for this setup — the climb is rated <b>${formatRating(e.rating)}</b>, your car <b>${formatRating(this.sim.climbRating)}</b>. Upgrade <b>Motor</b> and <b>Traction</b>, or back up and take a run at it.`
+            : 'Lost momentum — back up and take a run at it.',
+          5.5,
+        );
         break;
       case 'lowBattery':
         this.audio.lowBattery();

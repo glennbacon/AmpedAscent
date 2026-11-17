@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CAMPAIGN, earnedStars, firstClearBonus, generateLevel, isUnlocked, levelId, levelLength, levelMaxSlope, nextLevelId, parseLevelId, slopeBar,
-  starCount, starPayout, STAR_CHARGE, STAR_CLEAR, STAR_COMBO,
+  CAMPAIGN, earnedStars, firstClearBonus, generateLevel, isUnlocked, levelId, levelLength, levelMaxSlope, levelRating, levelSlopeLimit, nextLevelId,
+  parseLevelId, slopeBar, starCount, starPayout, STAR_CHARGE, STAR_CLEAR, STAR_COMBO,
 } from '../src/sim/campaign';
+import { capacitySlope, carRating, climbHeight, climbLift, climbSlope, endlessClimbRating, loadoutForRating, makeClimb, MAX_RATING } from '../src/sim/climbs';
 import { CFG } from '../src/sim/config';
 import { POWERUP_KINDS, POWERUPS, PowerupState, RARE_KINDS, STANDARD_KINDS } from '../src/sim/powerups';
 import { hash01, Rng } from '../src/sim/rng';
@@ -128,7 +129,14 @@ describe('campaign', () => {
         expect(lv.length).toBe(levelLength(l));
         expect(lv.heights.length).toBe(lv.length / lv.step + 1);
         expect(lv.heights[0]).toBeCloseTo(0, 6);
-        expect(levelMaxSlope(lv)).toBeLessThanOrEqual(slopeBar(w) + 0.02);
+        expect(levelMaxSlope(lv)).toBeLessThanOrEqual(levelSlopeLimit(w, l) + 0.02);
+        // Climbs: at least one, easiest first, the last at the level's own rating, clear of both ends.
+        const climbs = lv.climbs!;
+        expect(climbs.length).toBeGreaterThanOrEqual(1);
+        expect(climbs[climbs.length - 1].rating).toBeCloseTo(levelRating(w, l), 6);
+        for (let k = 1; k < climbs.length; k++) expect(climbs[k].rating).toBeGreaterThan(climbs[k - 1].rating);
+        expect(climbs[0].x0).toBeGreaterThan(80);
+        expect(climbs[climbs.length - 1].riseEnd).toBeLessThan(lv.length - 60);
         // Rares join at level 4, at most one of each.
         const rares = lv.pickups.filter((p) => (RARE_KINDS as string[]).includes(p.kind)).map((p) => p.kind);
         if (l < 4) expect(rares).toEqual([]);
@@ -144,6 +152,7 @@ describe('campaign', () => {
           expect(p.x0).toBeGreaterThanOrEqual(70);
           expect(p.x1).toBeLessThanOrEqual(lv.length - 55);
           expect(isFairPlacement(p, (x) => t.base(x), Math.min(CFG.maxFaceSlope, slopeBar(w)))).toBe(true);
+          for (const c of climbs) expect(p.x1 < c.x0 - 10 || p.x0 > c.riseEnd).toBe(true); // faces stay clean
         }
       }
     }
@@ -176,9 +185,9 @@ describe('power-ups and upgrades', () => {
     expect([0, 1, 2, 3, 4].map(upgradeCost)).toEqual([800, 1600, 3200, 6400, 12800]);
     const a = deriveStats(STOCK_LOADOUT);
     const b = deriveStats(MAXED_LOADOUT);
-    expect(b.driveForce).toBeGreaterThan(a.driveForce * 1.9);
-    expect(b.topSpeed).toBeGreaterThan(a.topSpeed * 1.8);
-    expect(b.grip).toBeGreaterThan(a.grip * 1.6);
+    expect(b.driveForce).toBeGreaterThan(a.driveForce * 1.5);
+    expect(b.topSpeed).toBeGreaterThan(a.topSpeed * 1.65);
+    expect(b.grip).toBeGreaterThan(a.grip * 1.4);
     expect(b.dampRebound).toBeGreaterThan(a.dampRebound);
     expect(b.airAccel).toBeCloseTo(a.airAccel * 2, 5);
     expect(a.fourWD).toBe(false);
@@ -187,6 +196,77 @@ describe('power-ups and upgrades', () => {
     const tall = deriveStats({ ...STOCK_LOADOUT, tuning: { ...STOCK_LOADOUT.tuning, gearing: 1 } });
     expect(tall.topSpeed).toBeGreaterThan(a.topSpeed);
     expect(tall.driveForce).toBeLessThan(a.driveForce);
+  });
+});
+
+describe('climbs (the upgrade walls)', () => {
+  it('rates steeper and taller with every step, and a climb leaves a net ascent', () => {
+    for (let r = -2; r < MAX_RATING; r += 0.5) {
+      expect(capacitySlope(r + 0.5)).toBeGreaterThan(capacitySlope(r));
+      expect(climbSlope(r)).toBeLessThan(capacitySlope(r));
+      expect(climbHeight(r + 0.5)).toBeGreaterThanOrEqual(climbHeight(r));
+    }
+    const c = makeClimb(0, 100, 2);
+    expect(climbLift(c, 99)).toBe(0);
+    expect(climbLift(c, c.riseEnd)).toBeCloseTo(c.height, 6);
+    expect(climbLift(c, c.end + 5)).toBeCloseTo(c.height * (1 - CFG.climbDescentShare), 6);
+    // The face is a clean ramp at the rated slope: no step is steeper.
+    let worst = 0;
+    for (let x = c.x0; x < c.riseEnd; x += 0.25) worst = Math.max(worst, (climbLift(c, x + 0.25) - climbLift(c, x)) / 0.25);
+    expect(worst).toBeLessThanOrEqual(c.slope + 1e-6);
+    expect(worst).toBeGreaterThan(c.slope - 0.01);
+  });
+
+  it('rates the car: both Motor and Traction count, 4WD is a big step, gearing shifts it', () => {
+    expect(carRating(STOCK_LOADOUT)).toBe(0);
+    const t = (motor: number, traction: number, fwd = false) => carRating({ ...STOCK_LOADOUT, has4WD: fwd, tiers: { motor, traction, suspension: 0, flip: 0 } });
+    for (let k = 1; k <= 5; k++) expect(t(k, k)).toBeCloseTo(k, 6);
+    expect(t(5, 0)).toBeLessThan(2); // power without grip is mostly wasted
+    expect(t(0, 5)).toBeLessThan(2);
+    expect(t(3, 2)).toBeGreaterThan(t(2, 2));
+    expect(t(2, 2, true) - t(2, 2)).toBeGreaterThan(1.2);
+    const short = carRating({ ...STOCK_LOADOUT, tiers: { ...STOCK_LOADOUT.tiers, motor: 2, traction: 3 }, tuning: { ...STOCK_LOADOUT.tuning, gearing: -1 } });
+    expect(short).toBeGreaterThan(t(2, 3));
+    for (const r of [0, 1.5, 3, 4.6, 6]) expect(carRating(loadoutForRating(r))).toBeGreaterThanOrEqual(r - 0.05);
+  });
+
+  it('lays an ever-harder ladder of climbs through Endless, clear of props and the hook zone', () => {
+    expect(endlessClimbRating(0)).toBeLessThan(-1);
+    expect(endlessClimbRating(550)).toBeCloseTo(0, 6);
+    expect(endlessClimbRating(3600)).toBeCloseTo(5, 6);
+    for (let m = 0; m < 9000; m += 250) expect(endlessClimbRating(m + 250)).toBeGreaterThanOrEqual(endlessClimbRating(m));
+    for (const seed of [3, 44, 505]) {
+      const track = new EndlessTrack(seed);
+      const climbs = track.firstClimbs(14);
+      expect(climbs[0].x0).toBeGreaterThanOrEqual(CFG.hookM);
+      expect(climbs[0].rating).toBeLessThan(-1); // the first wall is a warm-up for a stock car
+      for (let i = 1; i < climbs.length; i++) {
+        expect(climbs[i].rating).toBeGreaterThan(climbs[i - 1].rating);
+        expect(climbs[i].x0 - climbs[i - 1].end).toBeGreaterThanOrEqual(CFG.endlessClimbGap[0] - 1e-6);
+      }
+      for (const c of climbs) {
+        // The realized face matches the rated slope (rollers are damped out on it).
+        let worst = 0;
+        for (let x = c.x0 + 8; x < c.riseEnd - 8; x += 0.5) worst = Math.max(worst, (track.base(x + 0.5) - track.base(x)) / 0.5);
+        expect(worst).toBeLessThan(c.slope + 0.08);
+        expect(worst).toBeGreaterThan(c.slope - 0.08);
+        expect(track.propsIn(c.x0 - 8, c.riseEnd).length).toBe(0);
+        // A cell at the foot and one on the summit.
+        const cells = track.pickupsIn(c.x0 - 10, c.riseEnd + 8).filter((p) => p.kind === 'energy');
+        expect(cells.length).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it('asks more of the car with every Adventure level, most in the last world', () => {
+    for (let w = 1; w <= CAMPAIGN.worlds; w++) {
+      for (let l = 1; l <= 3; l++) expect(levelRating(w, l)).toBeLessThan(0); // a stock car's first three levels
+      for (let l = 4; l <= 15; l++) expect(levelRating(w, l)).toBeGreaterThan(levelRating(w, l - 1));
+      if (w > 1) expect(levelRating(w, 15)).toBeGreaterThan(levelRating(w - 1, 15));
+    }
+    expect(levelRating(1, 15)).toBeCloseTo(3, 6);
+    expect(levelRating(6, 15)).toBeCloseTo(6, 6); // maxed tiers alone are not enough: this one wants 4WD
+    expect(carRating({ ...STOCK_LOADOUT, tiers: { motor: 5, traction: 5, suspension: 5, flip: 5 } })).toBeLessThan(levelRating(6, 15));
   });
 });
 

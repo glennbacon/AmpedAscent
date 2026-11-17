@@ -7,6 +7,15 @@ import { hash01, hash32 } from './rng';
 import { WORLDS, WORLD_ORDER, WorldDef, WorldId, worldField, worldSpice } from './worlds';
 import type { PowerupKind } from './powerups';
 import { RARE_KINDS, STANDARD_KINDS } from './powerups';
+import { Climb, climbLift, climbWeight, endlessClimbRating, makeClimb } from './climbs';
+
+/** What gameplay needs to know about a climb (the terrain itself is already in the heights). */
+export interface ClimbInfo {
+  index: number;
+  rating: number;
+  x0: number; // foot of the face
+  riseEnd: number; // top of the face
+}
 
 export type PropKind = 'ramp' | 'whoops' | 'halfpipe' | 'bridge' | 'loop';
 export const PROP_KINDS: PropKind[] = ['ramp', 'whoops', 'halfpipe', 'bridge', 'loop'];
@@ -38,7 +47,7 @@ export const PROP = {
   whoopsAmp: 0.34,
   whoopsCount: 5,
   halfpipeSpan: [20.6, 26],
-  halfpipeDepthRatio: 0.27,
+  halfpipeDepthRatio: 0.15, // walls peak at slope ≈0.47: any car can drive out from a dead stop (never a trap)
   bridgePad: 3,
   bridgeLength: 15,
   bridgeValleyDepth: 3.4,
@@ -156,6 +165,8 @@ export function isFairPlacement(p: PlacedProp, base: (x: number) => number, maxS
     if (!acrossLip) {
       if (s > (p.kind === 'whoops' ? Math.min(maxSlope, 0.92) : maxSlope)) return false;
       if (p.kind === 'halfpipe' && s < -maxSlope) return false;
+      // A dug bowl must never trap: its way out has to be drivable by a stock car from a dead stop.
+      if (p.kind === 'halfpipe' && s > 0.58) return false;
     }
     prev = h;
   }
@@ -218,6 +229,10 @@ export abstract class Track {
       }
     }
     return out;
+  }
+  /** Climbs (upgrade walls) whose face may touch [x0, x1]. */
+  climbsIn(_x0: number, _x1: number): ClimbInfo[] {
+    return [];
   }
   gravityMulAt(x: number): number {
     const b = this.biomeAt(x);
@@ -328,6 +343,9 @@ export class EndlessTrack extends Track {
   private biomeSeq: WorldId[];
   private energyCount = 0;
   private coinCount = 0;
+  private climbs: Climb[] = [];
+  private climbGain: number[] = []; // net height banked by all climbs before climb i
+  private climbPickupsDone = 0;
 
   /** `firstSeam` (QA) forces the first biome seam to that distance. */
   constructor(readonly seed: number, startWorld: WorldId = 'sylvan', private flat = false, private firstSeam = 0) {
@@ -390,8 +408,65 @@ export class EndlessTrack extends Track {
     return y;
   }
 
+  /** Climbs are laid out front to back: each foot sits a seeded stretch of rolling ground past the last. */
+  private ensureClimbs(x: number) {
+    for (;;) {
+      const n = this.climbs.length;
+      const last = n ? this.climbs[n - 1] : null;
+      if (last && last.x0 > x + 300) return;
+      const x0 = last
+        ? last.end + lerp(CFG.endlessClimbGap[0], CFG.endlessClimbGap[1], hash01(this.seed, 0xc11b, n))
+        : CFG.endlessFirstClimbM + hash01(this.seed, 0xc11b, 0) * 40;
+      this.climbGain.push(last ? this.climbGain[n - 1] + last.height - last.drop : 0);
+      this.climbs.push(makeClimb(n, x0, endlessClimbRating(x0)));
+    }
+  }
+  /** Index of the last climb whose foot is at or before x (−1 if none). */
+  private climbIndexAt(x: number): number {
+    this.ensureClimbs(x);
+    let lo = 0;
+    let hi = this.climbs.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.climbs[mid].x0 <= x) {
+        ans = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return ans;
+  }
+  climbsIn(x0: number, x1: number): Climb[] {
+    if (this.flat || x1 < CFG.endlessFirstClimbM - 60) return [];
+    this.ensureClimbs(x1);
+    return this.climbs.filter((c) => c.end >= x0 && c.x0 <= x1);
+  }
+  /** QA/tests: the first `n` climbs of this run. */
+  firstClimbs(n: number): Climb[] {
+    while (this.climbs.length < n) this.ensureClimbs((this.climbs[this.climbs.length - 1]?.end ?? 0) + 400);
+    return this.climbs.slice(0, n);
+  }
+
   private raw(x: number): number {
     if (this.flat) return 0;
+    const roll = this.rolling(x);
+    if (x < CFG.endlessFirstClimbM - CFG.climbBlendM - 10) return roll;
+    // A climb owns its ground: the rollers fade out on the approach and stay damped across it.
+    const i = this.climbIndexAt(x);
+    let lift = 0;
+    let w = 0;
+    if (i >= 0) {
+      const c = this.climbs[i];
+      lift = this.climbGain[i] + climbLift(c, x);
+      w = climbWeight(c, x);
+    }
+    const nxt = this.climbs[i + 1];
+    if (nxt) w = Math.max(w, climbWeight(nxt, x));
+    return roll * (1 - CFG.climbDamp * w) + lift;
+  }
+
+  /** The biome's rolling terrain (difficulty envelope + seam blends), before climbs. */
+  private rolling(x: number): number {
     const i = this.segIndexAt(x);
     const seg = this.segments[i];
     const half = CFG.seamBlendHalfM;
@@ -484,7 +559,9 @@ export class EndlessTrack extends Track {
       let placed: PlacedProp | null = null;
       if (def) {
         const p = placeProp(def, i, (x) => this.base(x));
-        const clear = p.x0 > this.lastWindowEnd + 2;
+        // Climbs stay clean: no furniture on the face, the summit or the descent.
+        const onClimb = this.climbsIn(p.x0 - 16, p.x1 + 8).length > 0;
+        const clear = p.x0 > this.lastWindowEnd + 2 && !onClimb;
         if (clear && isFairPlacement(p, (x) => this.base(x))) {
           placed = p;
           this.lastWindowEnd = p.x1;
@@ -573,6 +650,16 @@ export class EndlessTrack extends Track {
         }
       }
     }
+    // Every climb gets a cell at its foot (one honest attempt) and one on the summit (the payoff).
+    this.ensureClimbs(target);
+    while (this.climbPickupsDone < this.climbs.length && this.climbs[this.climbPickupsDone].fallStart < target) {
+      const c = this.climbs[this.climbPickupsDone++];
+      for (const ex of [c.x0 - 7, c.x0 + c.riseLen * 0.36, c.x0 + c.riseLen * 0.7, c.riseEnd + 5]) this.push('energy', ex, this.surface(ex) + 1.35);
+      for (let k = 1; k <= 5; k++) {
+        const cx = c.x0 + (c.riseLen * k) / 6;
+        this.push('coin', cx, this.surface(cx) + 1.3);
+      }
+    }
     // Prop reward lines.
     for (const p of this.propsIn(this.pickupsBuiltTo - 60, target)) {
       if (this.rewardedSlots.has(p.index) || p.x + p.span > target) continue;
@@ -612,6 +699,8 @@ export interface LevelData {
   heights: number[]; // heights[i] at x = i·step, covering [0, length]
   pickups: LevelPickup[];
   props: PropDef[];
+  /** Generated levels only: where the climbs are (the shape is already baked into `heights`). */
+  climbs?: ClimbInfo[];
 }
 
 export function emptyLevel(name: string, world: WorldId = 'sylvan', length = 120): LevelData {
@@ -637,7 +726,13 @@ export function sanitizeLevel(raw: any): LevelData | null {
         .filter((p: any) => p && PROP_KINDS.includes(p.kind) && Number.isFinite(+p.x))
         .map((p: any) => ({ kind: p.kind, x: +p.x, size: clamp(Math.round(+p.size || 0), 0, 2) }))
     : [];
-  return { v: 1, name: String(raw.name ?? 'Level').slice(0, 24), world, length, step, heights, pickups, props };
+  const out: LevelData = { v: 1, name: String(raw.name ?? 'Level').slice(0, 24), world, length, step, heights, pickups, props };
+  if (Array.isArray(raw.climbs)) {
+    out.climbs = raw.climbs
+      .filter((c: any) => c && [c.x0, c.riseEnd, c.rating].every((v: any) => Number.isFinite(+v)))
+      .map((c: any, i: number) => ({ index: i, rating: +c.rating, x0: +c.x0, riseEnd: +c.riseEnd }));
+  }
+  return out;
 }
 
 export class LevelTrack extends Track {
@@ -681,6 +776,9 @@ export class LevelTrack extends Track {
 
   biomeAt(): BiomeBlend {
     return { a: this.world, b: this.world, t: 0 };
+  }
+  climbsIn(x0: number, x1: number): ClimbInfo[] {
+    return (this.level.climbs ?? []).filter((c) => c.riseEnd >= x0 && c.x0 <= x1);
   }
 
   propsIn(x0: number, x1: number): PlacedProp[] {

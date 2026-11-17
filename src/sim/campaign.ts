@@ -2,6 +2,7 @@
 // Every world's level 1 is open from a fresh save; later levels unlock in order within a world.
 
 import { CFG, clamp, lerp, smoothstep, TAU } from './config';
+import { capacitySlope, Climb, climbLift, climbSlope, climbWeight, makeClimb } from './climbs';
 import { hash32, Rng } from './rng';
 import { POWERUPS, PowerupKind, RARE_KINDS } from './powerups';
 import {
@@ -58,6 +59,21 @@ const STEEP_FLOOR = 0.6;
 const STEEP_CEIL = [0.95, 1.0, 1.05, 0.98, 1.15, 1.35]; // the last world is a deliberate upgrade wall
 export const slopeBar = (world: number) => (world >= 6 ? 1.5 : 1.2);
 
+/**
+ * The climb rating a level asks for (see sim/climbs.ts): the Motor+Traction tier its hardest wall
+ * needs. Levels 1–3 of every world sit below a stock car's limit; from level 4 the bar rises to the
+ * world's ceiling at level 15. The last world tops out where only a maxed car with 4WD gets over.
+ */
+const WORLD_RATING_CEIL = [3.0, 3.5, 4.0, 4.5, 5.0, 6.0];
+export function levelRating(world: number, level: number): number {
+  if (level <= 3) return [-1.6, -1.1, -0.6][level - 1];
+  return WORLD_RATING_CEIL[world - 1] * Math.pow((level - 3) / (CAMPAIGN.levelsPerWorld - 3), 0.9);
+}
+export function levelRatingOf(id: string): number {
+  const p = parseLevelId(id);
+  return p ? levelRating(p.world, p.level) : 0;
+}
+
 export const ampMul = (world: number, level: number) =>
   lerp(0.6, WORLD_AMP_CEIL[world - 1], smoothstep((level - 1) / (CAMPAIGN.levelsPerWorld - 1)));
 export const steepTarget = (world: number, level: number) =>
@@ -76,7 +92,9 @@ export function generateLevel(id: string): LevelData | null {
   const texRng = new Rng(hash32(0x7e87, world, level)); // texture stream: never perturbs pickup/prop draws
   const length = levelLength(level);
   const amp = ampMul(world, level);
-  const steep = steepTarget(world, level);
+  const rating = levelRating(world, level);
+  // Short crests may run a little steeper than the level's walls: momentum carries a rated car over.
+  const steep = Math.min(steepTarget(world, level), capacitySlope(Math.max(0, rating)) + 0.12);
 
   // Per-level texture: jittered wavelengths + free phases, so no two levels roll the same hills.
   const octs = def.octaves.map((o) => ({
@@ -117,20 +135,16 @@ export function generateLevel(id: string): LevelData | null {
     return { a, s };
   };
 
-  const climbShare = level < 9 ? 0 : lerp(0, world >= 6 ? 0.62 : 0.34, (level - 8) / 7);
   const baseSlopeBound = octs.reduce((sum, o) => sum + (o.amp * TAU) / o.wave, 0);
   const raw = (x: number, kSpice: number, kAll: number) => {
     const { a, s } = envAt(x);
     let y = 0;
     for (const o of octs) y += a * o.amp * Math.sin((x / o.wave) * TAU + o.phase);
     if (steep > 0) {
-      // Steep layer: the slope still owed to the target is split between punchy crests (the biome's
-      // short octave) and SUSTAINED climbs (a boost to the mid octave) — momentum carries a weak car
-      // over a crest, only torque and grip get it up a long face.
+      // Crest layer: scale the biome's short octave so the punchiest rollers reach the target.
+      // (Sustained difficulty is not done here — that is what the climbs below are for.)
       const want = Math.max(0, steep * s - baseSlopeBound * a * 0.72);
-      y += kSpice * (1 - climbShare) * ((want * spice.wave) / TAU) * Math.sin((x / spice.wave) * TAU + spice.phase);
-      const mid = octs[1];
-      y += kSpice * climbShare * ((want * mid.wave) / TAU) * Math.sin((x / mid.wave) * TAU + mid.phase);
+      y += kSpice * ((want * spice.wave) / TAU) * Math.sin((x / spice.wave) * TAU + spice.phase);
     }
     return y * kAll;
   };
@@ -157,7 +171,54 @@ export function generateLevel(id: string): LevelData | null {
     else kAll *= (bar / worst) * 0.94;
   }
 
-  const level0: LevelData = { v: 1, name: `${def.name} ${level}`, world: def.id, length, step, heights, pickups: [], props: [] };
+  // ---- climbs: the level's upgrade walls, easiest first, the last one at the level's full rating ----
+  const climbRng = new Rng(hash32(0xc11b, world, level));
+  const climbs: Climb[] = [];
+  {
+    let count = clamp(Math.round(length / 420), 1, 8);
+    const firstFoot = 84;
+    const lastEnd = length - 62;
+    let specs: Climb[] = [];
+    for (; count >= 1; count--) {
+      specs = [];
+      for (let j = 0; j < count; j++) specs.push(makeClimb(j, 0, Math.max(-2, rating - (count - 1 - j) * 0.35)));
+      const need = specs.reduce((sum, c) => sum + (c.end - c.x0), 0) + (count - 1) * 2 * CFG.climbBlendM;
+      if (need <= lastEnd - firstFoot) break;
+    }
+    if (count >= 1) {
+      const total = specs.reduce((sum, c) => sum + (c.end - c.x0), 0);
+      const free = lastEnd - firstFoot - total - (count - 1) * 2 * CFG.climbBlendM;
+      // Spread the spare ground between the climbs with seeded weights (first gap = the launch run).
+      const weights = specs.map(() => 0.5 + climbRng.next());
+      weights.push(0.35 + climbRng.next() * 0.4);
+      const wsum = weights.reduce((a, b) => a + b, 0);
+      let x = firstFoot;
+      specs.forEach((c, j) => {
+        x += (free * weights[j]) / wsum + (j ? 2 * CFG.climbBlendM : 0);
+        climbs.push(makeClimb(j, x, c.rating));
+        x += c.end - c.x0;
+      });
+    }
+  }
+  const gainBefore: number[] = [];
+  climbs.forEach((c, j) => gainBefore.push(j ? gainBefore[j - 1] + climbs[j - 1].height - climbs[j - 1].drop : 0));
+  for (let i = 0; i < n; i++) {
+    const x = i * step;
+    let lift = 0;
+    let w = 0;
+    for (let j = 0; j < climbs.length; j++) {
+      const c = climbs[j];
+      if (x >= c.x0 && (j === climbs.length - 1 || x < climbs[j + 1].x0)) lift = gainBefore[j] + climbLift(c, x);
+      w = Math.max(w, climbWeight(c, x));
+    }
+    heights[i] = heights[i] * (1 - CFG.climbDamp * w) + lift;
+  }
+
+  const level0: LevelData = {
+    v: 1, name: `${def.name} ${level}`, world: def.id, length, step, heights, pickups: [], props: [],
+    climbs: climbs.map((c) => ({ index: c.index, rating: c.rating, x0: c.x0, riseEnd: c.riseEnd })),
+  };
+  const onClimb = (x0: number, x1: number) => climbs.some((c) => x1 > c.x0 - 16 && x0 < c.end + 8);
 
   // ---- props: budget rides the level curve; every roll must pass the fairness gate ----
   const probe = new LevelTrack(level0);
@@ -167,6 +228,7 @@ export function generateLevel(id: string): LevelData | null {
   const tryPlace = (def: PropDef) => {
     const placed = placeProp(def, props.length, base);
     if (placed.x0 < 70 || placed.x1 > length - 55) return;
+    if (onClimb(placed.x0, placed.x1)) return; // climbs stay clean
     if (windows.some(([a, b]) => placed.x0 < b + 14 && placed.x1 > a - 14)) return;
     if (!isFairPlacement(placed, base, Math.min(CFG.maxFaceSlope as number, slopeBar(world)) as number)) return;
     props.push(def);
@@ -237,6 +299,11 @@ export function generateLevel(id: string): LevelData | null {
     if (useRare) usedRares.add(rare);
     add(useRare ? rare : common, jx, 1.7);
   }
+  // Every climb: a cell at the foot (one honest attempt), one on the summit, coins up the face.
+  for (const c of climbs) {
+    for (const ex of [c.x0 - 7, c.x0 + c.riseLen * 0.36, c.x0 + c.riseLen * 0.7, c.riseEnd + 5]) add('energy', ex, 1.35);
+    for (let k = 1; k <= 5; k++) add('coin', c.x0 + (c.riseLen * k) / 6, 1.3);
+  }
   // Reward lines on props (stored as heights above the drivable surface).
   for (const p of placedProps) {
     for (const c of propRewardCoins(p, (x) => track.height(x))) add('coin', c.x, c.y - track.surface(c.x));
@@ -254,5 +321,7 @@ export function levelMaxSlope(level: LevelData): number {
   for (let x = 0.5; x < level.length; x += 0.5) worst = Math.max(worst, (t.base(x) - t.base(x - 0.5)) / 0.5);
   return worst;
 }
+/** Steepest slope a level is ALLOWED to contain: its rolling bar or its hardest climb, whichever is more. */
+export const levelSlopeLimit = (world: number, level: number) => Math.max(slopeBar(world), climbSlope(levelRating(world, level)) + 0.06);
 
 export { POWERUPS, PROP, propSpan, isBody };

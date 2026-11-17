@@ -6,6 +6,8 @@ Every model, texture, sound and note of music is generated from code.
 
 - **Endless Drive** — one battery, six biomes that blend into each other, hills that keep growing.
 - **Adventure** — 6 worlds × 15 generated levels, three mastery stars each.
+- **Climbs** — rated walls that get steeper the further you go. A car below a climb's rating stalls
+  on it; Motor and Traction upgrades (and four-wheel drive) raise yours.
 - **Garage** — motor, traction, suspension and flip-control upgrades, four-wheel drive, a tuning
   bench with real trade-offs, and eight motor voices.
 - **Power-ups** — Turbo, Magnet, Coin Frenzy, Wheelie Time, Flip Master, Jump Jets, Roll Bar,

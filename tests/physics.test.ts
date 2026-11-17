@@ -5,6 +5,8 @@ import { CFG, wrapAngle } from '../src/sim/config';
 import { RunSim, SimEvent } from '../src/sim/run';
 import { EndlessTrack, FnTrack, LevelTrack, PropKind } from '../src/sim/track';
 import { deriveStats, MAXED_LOADOUT, STOCK_LOADOUT, Loadout } from '../src/sim/upgrades';
+import { carRating, loadoutForRating } from '../src/sim/climbs';
+import { levelRating } from '../src/sim/campaign';
 
 const dt = 1 / CFG.stepHz;
 const idle = { gas: 0, brake: 0, jump: false };
@@ -264,6 +266,89 @@ describe('props', () => {
   });
 });
 
+describe('upgrade walls', () => {
+  const drive = (seed: number, lo: Loadout) => {
+    const track = new EndlessTrack(seed);
+    const sim = new RunSim(track, lo);
+    const r = autoDrive(sim, 'pro', 420, 9000);
+    return { dist: r.distance, sim, track };
+  };
+  const tier = (t: number): Loadout => ({ ...STOCK_LOADOUT, tiers: { motor: t, traction: t, suspension: t, flip: 0 } });
+
+  it('Endless: a stock car tops the warm-up climbs, then meets a wall it cannot hold', () => {
+    for (const seed of [7919, 15838, 31676]) {
+      const { dist, sim, track } = drive(seed, STOCK_LOADOUT);
+      const climbs = track.firstClimbs(8);
+      expect(sim.stats.climbs).toBeGreaterThanOrEqual(1);
+      // It never gets over a climb rated a full step and a half above itself.
+      const wall = climbs.find((c) => c.rating >= 1.5)!;
+      expect(dist).toBeLessThan(wall.riseEnd);
+      expect(dist).toBeGreaterThan(climbs[0].riseEnd);
+    }
+  });
+
+  it('Endless: every upgrade step buys real distance', () => {
+    const med = (lo: Loadout) => {
+      const d = [7919, 15838, 31676].map((s) => drive(s, lo).dist).sort((a, b) => a - b);
+      return d[1];
+    };
+    const d0 = med(STOCK_LOADOUT);
+    const d2 = med(tier(2));
+    const d4 = med(tier(4));
+    expect(d2).toBeGreaterThan(d0 + 500);
+    expect(d4).toBeGreaterThan(d2 + 500);
+  });
+
+  it('Adventure: an under-rated car is stopped, a car at the rating finishes', () => {
+    for (const [w, l] of [[1, 8], [3, 11], [6, 8]] as const) {
+      const need = levelRating(w, l);
+      const lv = generateLevel(`w${w}-l${l}`)!;
+      // "Under" = a clear step short (a car only a fraction below can still muscle over with momentum).
+      const weak = loadoutForRating(need - 1.6);
+      expect(carRating(weak)).toBeLessThan(need - 0.9);
+      const under = autoDrive(new RunSim(new LevelTrack(lv), weak), 'pro', 400, 1e9);
+      const at = autoDrive(new RunSim(new LevelTrack(lv), loadoutForRating(need)), 'pro', 400, 1e9);
+      expect(under.cause).not.toBe('completed');
+      expect(at.cause).toBe('completed');
+    }
+  });
+
+  it('a stalled car is told why, and summits pay', () => {
+    const lv = generateLevel('w3-l11')!;
+    const sim = new RunSim(new LevelTrack(lv), STOCK_LOADOUT);
+    const d = new AutoDriver('pro');
+    sim.live = true;
+    const seen = new Set<string>();
+    const pops: string[] = [];
+    for (let i = 0; i < 200 * CFG.stepHz && sim.status === 'playing'; i++) {
+      sim.step(dt, d.input(sim, dt));
+      for (const e of sim.events) {
+        seen.add(e.t);
+        if (e.t === 'popup') pops.push(e.text);
+      }
+      sim.events.length = 0;
+    }
+    expect(seen.has('stall')).toBe(true);
+    expect(sim.lastStall!.rating).toBeGreaterThan(sim.climbRating);
+    expect(pops.some((p) => p.startsWith('CLIMB '))).toBe(true);
+    expect(sim.status).toBe('ended'); // the wall, then the battery, ends the run
+
+    const ok = new RunSim(new LevelTrack(generateLevel('w1-l2')!), STOCK_LOADOUT);
+    autoDrive(ok, 'pro', 120, 1e9);
+    expect(ok.stats.climbs).toBe(1);
+  });
+
+  it('a half-pipe is never a trap: a stock car drives out from a dead stop at the bottom', () => {
+    const sim = new RunSim(new FnTrack(() => 0, undefined, [{ kind: 'halfpipe', x: 30, size: 1 }]), STOCK_LOADOUT);
+    sim.live = true;
+    run(sim, 0.3);
+    sim.placeAt(43); // the deepest point of the big pipe
+    run(sim, 1.0);
+    run(sim, 8, gas);
+    expect(sim.vehicle.x).toBeGreaterThan(60);
+  });
+});
+
 describe('completability', () => {
   it('every world opener is finishable stock with charge to spare', () => {
     for (let w = 1; w <= 6; w++) {
@@ -271,6 +356,15 @@ describe('completability', () => {
       const r = autoDrive(sim, 'pro', 90, 1e9);
       expect(r.cause).toBe('completed');
       expect(r.battery).toBeGreaterThan(0.5);
+    }
+  });
+
+  it('the first three levels of a world need no upgrades', () => {
+    for (const w of [2, 5]) {
+      for (const l of [2, 3]) {
+        const r = autoDrive(new RunSim(new LevelTrack(generateLevel(`w${w}-l${l}`)!), STOCK_LOADOUT), 'pro', 150, 1e9);
+        expect(r.cause).toBe('completed');
+      }
     }
   });
 

@@ -368,6 +368,9 @@ export class Vehicle {
     // Standing on its tail or roof the car cannot drive itself along the ground.
     const slopeHere = ctx.slopeAngle(this.x);
     const tipped = Math.abs(wrapAngle(this.angle - slopeHere)) > 1.3 && (this.hullContact || this.roofContact);
+    // Wheelie Time is a show-off for open ground: on a real climb it would trade the drive the
+    // car needs for a pose, so the assist stands down and the car just climbs.
+    const assist = ctx.wheelieAssist && slopeHere < CFG.wheelieAssistMaxSlope;
     let gas = ctx.hasCharge && !tipped ? clamp(inp.gas, 0, 1) : 0;
     // Wheelie guard (traction control): with only the rear axle down, power fades as the nose
     // climbs past ~40°, so flooring it rides a wheelie instead of looping the car onto its roof.
@@ -376,7 +379,7 @@ export class Vehicle {
       const tilt = wrapAngle(this.angle - slopeHere);
       // Wheelie Time holds its own (steeper) angle: ease the motor off as the nose reaches it so the
       // drive reaction never throws the car past the balance point.
-      if (ctx.wheelieAssist) gas *= clamp(1 - (tilt - CFG.wheelieAssistAngle + 0.3) / 0.45, 0.25, 1);
+      if (assist) gas *= clamp(1 - (tilt - CFG.wheelieAssistAngle + 0.3) / 0.45, 0.25, 1);
       else gas *= 1 - smoothstep((tilt - CFG.wheelieGuardStart) / (CFG.wheelieGuardEnd - CFG.wheelieGuardStart));
     }
     const brake = clamp(inp.brake, 0, 1);
@@ -449,7 +452,7 @@ export class Vehicle {
       this.flipTarget = null;
       ch.setAngularDamping(CFG.groundAngularDamping);
       const oneAxle = this.grounded[REAR] !== this.grounded[FRONT];
-      if (ctx.wheelieAssist && gas > 0 && this.grounded[REAR] && !inLoop) {
+      if (assist && gas > 0 && this.grounded[REAR] && !inLoop) {
         // Wheelie Time: PD-balance on the rear axle at a show-off angle; can never loop over.
         // Gravity feed-forward carries the nose's weight about the rear contact; the PD only trims.
         const tilt = wrapAngle(this.angle - slopeHere);
